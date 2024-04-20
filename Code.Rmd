@@ -1,0 +1,162 @@
+---
+title: "Code"
+author: "pinxuan"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+#load libraries
+library(igraph)
+library(tidyverse)
+library(ggplot2)
+
+#load datasets
+responses <- read.csv('class-responses.csv')
+names <- read.csv('class-names.csv')
+
+summary(responses)
+summary(names)
+```
+
+```{r}
+#identify students who have rated everyone
+rated_everyone <- responses %>%
+  group_by(rater) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count)) %>%
+  filter(count==75)
+
+#remove their ratings of 1 
+erroneous_ratings <- responses %>%
+  inner_join(rated_everyone, by = c("rater" = "rater")) %>%
+  filter(weight == 1)
+
+cleaned_responses <- responses %>%
+  anti_join(erroneous_ratings, by = c("rater", "selected", "weight"))
+```
+
+```{r}
+#merge data set
+responses_merged <- cleaned_responses %>% 
+  left_join(names, by = c('rater' = 'id'))
+```
+
+```{r}
+#create graph
+graph <- graph_from_data_frame(responses_merged, directed = TRUE)
+summary(graph)
+print(graph)
+```
+
+```{r}
+# Calculate in-degree and out-degree
+in_degrees <- degree(graph, mode = "in")
+out_degrees <- degree(graph, mode = "out")
+
+# In-degree histogram
+plot(table(in_degrees), main = "In-Degree Distribution", xlab = "In-Degree", ylab = "Frequency", col = "skyblue")
+
+# Out-degree histogram
+plot(table(out_degrees), main = "Out-Degree Distribution", xlab = "Out-Degree", ylab = "Frequency", col = "lightcoral")
+
+# In-degree vs Out-degree scatter plot
+plot(in_degrees, out_degrees, main = "Scatter Plot of In-Degree vs Out-Degree", 
+     xlab = "In-Degree", ylab = "Out-Degree", col = "blue")
+
+# Add a diagonal line (y = x)
+abline(a = 0, b = 1, col = "red", lwd = 2)
+
+in_degree <- degree(graph, mode = "in")  # In-degree centrality
+out_degree <- degree(graph, mode = "out")
+
+# Step 2: Extract centralities for all nodes
+in_degree_values <- as.numeric(in_degree)  # Extract in-degree values
+out_degree_values <- as.numeric(out_degree)  # Extract out-degree values
+
+# Step 3: Compute correlation between in-degree and out-degree centralities
+correlation <- cor(in_degree_values, out_degree_values)
+
+```
+
+```{r}
+#graph visualization
+plot(graph,
+     layout = layout_nicely(graph),  
+     vertex.color = "lightblue",  # Set vertex color
+     vertex.size = in_degree,             # Set vertex size
+     vertex.label.color = "black", # Set vertex label color
+     edge.arrow.size = 0.2,        # Set arrow size for directed edges
+     main = "My Graph")            # Set plot title
+
+```
+
+
+```{r}
+# Testing for communities in the network
+infomap_out <- cluster_infomap(graph, e.weights = NULL)
+V(graph)$community_infomap <- infomap_out$membership
+
+plot(graph, vertex.color=V(graph)$community_infomap, vertex.size = 9,
+vertex.frame.color = 'white', edge.arrow.size = 0.3,
+vertex.label = NA, main = 'Infomap')
+
+```
+
+
+```{r}
+#Method: Linear Regression
+
+# Compute in-degree and out-degree for each node
+in_degrees <- degree(graph, mode = "in")
+out_degrees <- degree(graph, mode = "out")
+
+# Calculate the average rating for each rater
+responses_merged <- responses_merged %>%
+  group_by(rater) %>%
+  mutate(average_rating = mean(weight, na.rm = TRUE))
+
+# Merge the degrees, interaction term, and centrality measures back to the original dataset
+regressdata <- responses_merged %>%
+  mutate(
+    in_degree_rater = in_degrees[as.character(rater)],
+    in_degree_selected = in_degrees[as.character(selected)],
+    out_degree_rater = out_degrees[as.character(rater)],
+    out_degree_selected = out_degrees[as.character(selected)],
+    interaction_term = out_degrees[rater] * in_degrees[selected]
+  )
+
+str(regressdata)
+regressdata$gender <- as.factor(regressdata$gender)
+regressdata$ethnicity <- as.factor(regressdata$ethnicity)
+regressdata$HM_or_not <- as.factor(regressdata$HM_or_not)
+regressdata$year_of_study <- as.factor(regressdata$year_of_study)
+
+# Create dummy variables for ethnicity, year_of_study (not needed for gender & HM as they are already binary)
+dummy_vars <- model.matrix(~ ethnicity + year_of_study - 1, data = regressdata)
+
+# Combine dummy variables with other variables in the dataset
+data_with_dummies <- cbind(regressdata, dummy_vars)
+
+str(data_with_dummies)
+
+#first model
+
+model <- lm(weight ~ gender + year_of_study4 + ethnicityChinese + ethnicityIndian + ethnicityOther + HM_or_not + in_degree_rater + in_degree_selected + out_degree_rater + out_degree_selected + interaction_term + average_rating, 
+            data = data_with_dummies)
+
+
+model <- lm(weight ~ gender + year_of_study4 + ethnicityChinese + ethnicityIndian + ethnicityOther + HM_or_not, 
+            data = data_with_dummies)
+
+summary(model)
+
+# Perform the regression again, without NA and Non-Significant
+model2 <- lm(weight ~ in_degree_selected + out_degree_selected + average_rating, 
+            data = data_with_dummies)
+
+# Print the summary
+summary(model2)
+
+```
+
